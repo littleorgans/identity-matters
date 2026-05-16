@@ -5,6 +5,7 @@ use im_core::{
     Action, AuditDecision, AuditError, AuditRow, AuditSink, Authorized, Authorizer, AuthzError,
     Principal, ResourceSpec,
 };
+use im_store::{SqliteAuditSink, query_audit};
 use im_stub::StubAuthorizer;
 
 #[derive(Default)]
@@ -30,40 +31,62 @@ impl AuditSink for MockAuditSink {
 }
 
 #[tokio::test]
-async fn authorizes_local_uid_and_audits_both_decisions() {
+async fn authorizes_local_uid_and_audits_both_decisions_with_mock_sink() {
     let mock = MockAuditSink::default();
     let process_uid = nix::unistd::getuid().as_raw();
-    let authorizer = StubAuthorizer {
-        audit_sink: &mock,
-        local_uid: process_uid,
-    };
+    authorize_both_decisions(&mock, process_uid).await;
+
+    assert_audited_both_decisions(mock.rows(), process_uid);
+}
+
+#[tokio::test]
+async fn authorizes_local_uid_and_audits_both_decisions_with_sqlite_sink() {
+    let temp_dir = tempfile::tempdir().expect("create audit sqlite temp dir");
+    let db_path = temp_dir.path().join("audit.sqlite");
+    let sink = SqliteAuditSink::connect(&db_path)
+        .await
+        .expect("connect audit sqlite sink");
+    sink.run_migrations().await.expect("run audit migrations");
+
+    let process_uid = nix::unistd::getuid().as_raw();
+    authorize_both_decisions(&sink, process_uid).await;
+    let rows = query_audit(&db_path).await.expect("read audit rows");
+
+    assert_audited_both_decisions(rows, process_uid);
+}
+
+async fn authorize_both_decisions<S>(audit_sink: &S, process_uid: u32)
+where
+    S: AuditSink + ?Sized,
+{
+    let authorizer = StubAuthorizer::new(audit_sink, process_uid);
     let resource = ResourceSpec::default();
 
-    let result = authorizer
+    let allowed = authorizer
         .authorize(&Principal::Local(process_uid), Action::Spawn, &resource)
         .await;
 
     assert_eq!(
-        result,
+        allowed,
         Ok(Authorized {
             principal: Principal::Local(process_uid),
             role: "admin".to_owned(),
             capabilities: Vec::new(),
         })
     );
-    let rows = mock.rows();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].decision, AuditDecision::Allow);
-    assert_eq!(rows[0].action, Action::Spawn);
-    assert_eq!(rows[0].principal, Principal::Local(process_uid));
 
-    let result = authorizer
+    let denied = authorizer
         .authorize(&Principal::Local(process_uid + 1), Action::Spawn, &resource)
         .await;
 
-    assert_eq!(result, Err(AuthzError::UnknownPrincipal));
-    let rows = mock.rows();
+    assert_eq!(denied, Err(AuthzError::UnknownPrincipal));
+}
+
+fn assert_audited_both_decisions(rows: Vec<AuditRow>, process_uid: u32) {
     assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].decision, AuditDecision::Allow);
+    assert_eq!(rows[0].action, Action::Spawn);
+    assert_eq!(rows[0].principal, Principal::Local(process_uid));
     assert_eq!(
         rows[1].decision,
         AuditDecision::Deny {

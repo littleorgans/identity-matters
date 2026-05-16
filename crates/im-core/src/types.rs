@@ -133,6 +133,22 @@ pub enum Action {
     Daemon,
 }
 
+impl Action {
+    pub const ALL: [Self; 11] = [
+        Self::Spawn,
+        Self::Kill,
+        Self::List,
+        Self::Read,
+        Self::Logs,
+        Self::MailSend,
+        Self::MailRead,
+        Self::Nudge,
+        Self::Link,
+        Self::Doctor,
+        Self::Daemon,
+    ];
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeKind {
