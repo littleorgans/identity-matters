@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/im-core",
+    "crates/im-stub",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/littleorgans/identity-matters"
+
+[workspace.dependencies]
+im-core = { path = "crates/im-core" }
+im-stub = { path = "crates/im-stub" }
+
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+nix = { version = "0.30", features = ["user"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0"
+tokio = { version = "1", features = ["macros", "rt"] }
+uuid = { version = "1.9", features = ["serde", "v7"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
