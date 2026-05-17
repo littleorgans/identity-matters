@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use chrono::{Duration, Utc};
-use im_core::{
+use lilo_im_core::{
     Action, AuditDecision, AuditRow, AuditSink, Authorizer, AuthzError, Principal, ResourceSpec,
     RuntimeKind,
 };
-use im_store::schema::RESERVED_AUDIT_COLUMNS;
-use im_store::{AuditFilters, AuditTableColumn, SqliteAuditSink, query_audit};
-use im_stub::StubAuthorizer;
+use lilo_im_store::schema::RESERVED_AUDIT_COLUMNS;
+use lilo_im_store::{AuditFilters, AuditTableColumn, SqliteAuditSink, query_audit};
+use lilo_im_stub::StubAuthorizer;
 use uuid::Uuid;
 
 #[tokio::test]

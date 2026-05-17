@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-use im_core::AuthzError;
-use im_core::{Principal, peer_creds};
+use lilo_im_core::AuthzError;
+use lilo_im_core::{Principal, peer_creds};
 use tokio::net::{UnixListener, UnixStream};
 
 #[tokio::test]

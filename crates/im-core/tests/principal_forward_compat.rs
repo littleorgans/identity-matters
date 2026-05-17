@@ -1,4 +1,4 @@
-use im_core::Principal;
+use lilo_im_core::Principal;
 use serde_json::json;
 
 #[test]

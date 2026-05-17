@@ -4,7 +4,7 @@ pub mod sqlite;
 
 use std::path::Path;
 
-use im_core::AuditRow;
+use lilo_im_core::AuditRow;
 
 pub use config::default_audit_db_path;
 pub use sqlite::{AuditFilters, AuditTableColumn, SqliteAuditSink, StoreError};

@@ -1,4 +1,4 @@
-use im_core::{Action, AuditDecision, AuthzError, Principal};
+use lilo_im_core::{Action, AuditDecision, AuthzError, Principal};
 
 #[test]
 fn authz_error_display_is_stable() {

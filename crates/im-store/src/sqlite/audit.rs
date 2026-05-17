@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use im_core::{Action, AuditDecision, AuditError, AuditRow, AuditSink, Principal, ResourceSpec};
+use lilo_im_core::{
+    Action, AuditDecision, AuditError, AuditRow, AuditSink, Principal, ResourceSpec,
+};
 use rusqlite::types::ToSql;
 use rusqlite::{Connection, Row, params, params_from_iter};
 use serde::Serialize;

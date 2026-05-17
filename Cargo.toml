@@ -11,11 +11,14 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/littleorgans/identity-matters"
+homepage = "https://github.com/littleorgans/identity-matters"
+authors = ["Stuart Robinson"]
+rust-version = "1.90"
 
 [workspace.dependencies]
-im-core = { path = "crates/im-core" }
-im-stub = { path = "crates/im-stub" }
-im-store = { path = "crates/im-store" }
+lilo-im-core = { path = "crates/im-core", version = "0.1.0" }
+lilo-im-stub = { path = "crates/im-stub", version = "0.1.0" }
+lilo-im-store = { path = "crates/im-store", version = "0.1.0" }
 
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

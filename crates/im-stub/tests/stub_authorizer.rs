@@ -1,12 +1,11 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use im_core::{
+use lilo_im_core::{
     Action, AuditDecision, AuditError, AuditRow, AuditSink, Authorized, Authorizer, AuthzError,
     Principal, ResourceSpec,
 };
-use im_store::{AuditFilters, SqliteAuditSink, query_audit};
-use im_stub::StubAuthorizer;
+use lilo_im_stub::StubAuthorizer;
 
 #[derive(Default)]
 struct MockAuditSink {
@@ -42,24 +41,6 @@ async fn authorizes_local_uid_and_audits_both_decisions_with_mock_sink() {
         "stub_authorizer_audit_decisions",
         format_stub_audit_rows(&rows, process_uid)
     );
-}
-
-#[tokio::test]
-async fn authorizes_local_uid_and_audits_both_decisions_with_sqlite_sink() {
-    let temp_dir = tempfile::tempdir().expect("create audit sqlite temp dir");
-    let db_path = temp_dir.path().join("audit.sqlite");
-    let sink = SqliteAuditSink::connect(&db_path)
-        .await
-        .expect("connect audit sqlite sink");
-    sink.run_migrations().await.expect("run audit migrations");
-
-    let process_uid = nix::unistd::getuid().as_raw();
-    authorize_both_decisions(&sink, process_uid).await;
-    let rows = query_audit(&db_path, AuditFilters::default())
-        .await
-        .expect("read audit rows");
-
-    assert_audited_both_decisions(&rows, process_uid);
 }
 
 async fn authorize_both_decisions<S>(audit_sink: &S, process_uid: u32)

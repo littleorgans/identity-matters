@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use im_core::{
+use lilo_im_core::{
     Action, AuditDecision, AuditRow, AuditSink, Authorized, Authorizer, AuthzError, AuthzResult,
     Principal, ResourceSpec,
 };

@@ -1,9 +1,19 @@
 [package]
-name = "im-core"
+name = "lilo-im-core"
+description = "Identity Matters core: Authorizer trait, Principal types, peer credential extraction (Helioy v1 IAM)"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["iam", "authorization", "audit", "principal", "helioy"]
+categories = ["authentication"]
+
+[lib]
+name = "lilo_im_core"
+path = "src/lib.rs"
 
 [dependencies]
 async-trait.workspace = true
