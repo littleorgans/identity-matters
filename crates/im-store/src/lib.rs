@@ -1,3 +1,8 @@
+//! Identity Matters audit storage: `SqliteAuditSink` and the filtered
+//! `query_audit` API. Owns the reserved schema fields (`policy_id`,
+//! `evaluation_trace`, `denial_reason`) that v2+ policy evaluation can
+//! populate without a migration.
+
 pub mod config;
 pub mod schema;
 pub mod sqlite;
