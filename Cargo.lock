@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "lilo-im-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "lilo-im-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "lilo-im-stub"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "insta",
