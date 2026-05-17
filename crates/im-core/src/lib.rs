@@ -1,3 +1,7 @@
+//! Identity Matters core: `Authorizer` trait, `Principal` types, peer credential
+//! extraction. Authorization is NOT enforced in v1; the v2+ roadmap replaces
+//! `lilo-im-stub` with an enforcing `lilo-im-daemon` behind the same contract.
+
 pub mod audit;
 pub mod error;
 pub mod peer_creds;

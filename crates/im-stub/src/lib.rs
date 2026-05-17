@@ -1,3 +1,7 @@
+//! Identity Matters v1 stub: `StubAuthorizer` audits every decision without
+//! enforcement. Use this crate to lock the `lilo-im-core` boundary at call
+//! sites today; v2+ swaps it for `lilo-im-daemon` behind the same `Authorizer`.
+
 use async_trait::async_trait;
 use lilo_im_core::{
     Action, AuditDecision, AuditRow, AuditSink, Authorized, Authorizer, AuthzError, AuthzResult,
