@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/littleorgans/identity-matters"
@@ -16,9 +16,9 @@ authors = ["Stuart Robinson"]
 rust-version = "1.90"
 
 [workspace.dependencies]
-lilo-im-core = { path = "crates/im-core", version = "0.1.0" }
-lilo-im-stub = { path = "crates/im-stub", version = "0.1.0" }
-lilo-im-store = { path = "crates/im-store", version = "0.1.0" }
+lilo-im-core = { path = "crates/im-core", version = "0.1.1" }
+lilo-im-stub = { path = "crates/im-stub", version = "0.1.1" }
+lilo-im-store = { path = "crates/im-store", version = "0.1.1" }
 
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
