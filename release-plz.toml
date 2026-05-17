@@ -1,0 +1,19 @@
+[workspace]
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+semver_check = true
+changelog_update = true
+publish = false
+
+[changelog]
+header = """# Changelog\n\nAll notable changes documented here.\n"""
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactoring", default_scope = "internal" },
+  { message = "^doc", group = "Documentation", default_scope = "internal" },
+  { message = "^chore", group = "Miscellaneous", default_scope = "internal" },
+  { message = "^test", group = "Tests", default_scope = "internal" },
+  { message = "^ci", group = "CI", default_scope = "internal" },
+]
