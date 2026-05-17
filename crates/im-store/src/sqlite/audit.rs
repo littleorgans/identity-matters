@@ -1,23 +1,22 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use im_core::{Action, AuditDecision, AuditError, AuditRow, AuditSink, Principal, ResourceSpec};
+use rusqlite::{Connection, Row, params};
 use serde::Serialize;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
-use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::config::{audit_db_parent, default_audit_db_path};
-use crate::schema::MIGRATOR;
+use crate::schema::{AUDIT_MIGRATION_SQL, AUDIT_SCHEMA_VERSION, AUDIT_TABLE, SCHEMA_VERSION_TABLE};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("sqlite error: {0}")]
-    Sqlx(#[from] sqlx::Error),
-    #[error("sqlite migration error: {0}")]
-    Migrate(#[from] sqlx::migrate::MigrateError),
+    Sqlite(#[from] rusqlite::Error),
+    #[error("sqlite task join error: {0}")]
+    TaskJoin(#[from] tokio::task::JoinError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("timestamp parse error: {0}")]
@@ -38,25 +37,23 @@ pub struct AuditTableColumn {
 
 #[derive(Debug, Clone)]
 pub struct SqliteAuditSink {
-    pool: SqlitePool,
+    path: PathBuf,
 }
 
 impl SqliteAuditSink {
+    pub async fn new(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        Self::connect(path).await
+    }
+
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let path = path.as_ref();
-        if let Some(parent) = audit_db_parent(path) {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = audit_db_parent(&path) {
             std::fs::create_dir_all(parent)?;
         }
 
-        let options = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await?;
+        with_connection(path.clone(), |_| Ok(())).await?;
 
-        Ok(Self { pool })
+        Ok(Self { path })
     }
 
     pub async fn connect_default() -> Result<Self, StoreError> {
@@ -64,65 +61,29 @@ impl SqliteAuditSink {
     }
 
     pub async fn run_migrations(&self) -> Result<(), StoreError> {
-        MIGRATOR.run(&self.pool).await?;
-        Ok(())
+        with_connection(self.path.clone(), run_audit_migrations).await
     }
 
     pub async fn query_audit(&self) -> Result<Vec<AuditRow>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT id, timestamp, principal, action, resource, decision, session_ref, notes, \
-             policy_id, evaluation_trace, denial_reason FROM audit ORDER BY rowid ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter()
-            .map(AuditRecord::from_row)
-            .collect::<Result<Vec<_>, _>>()
+        with_connection(self.path.clone(), query_audit_rows).await
     }
 
     pub async fn audit_table_columns(&self) -> Result<Vec<AuditTableColumn>, StoreError> {
-        let rows = sqlx::query("PRAGMA table_info(audit)")
-            .fetch_all(&self.pool)
-            .await?;
-
-        rows.into_iter()
-            .map(AuditTableColumn::from_row)
-            .collect::<Result<Vec<_>, _>>()
+        with_connection(self.path.clone(), query_audit_table_columns).await
     }
 
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
-    }
-
-    async fn insert_audit_row(&self, row: &AuditRow) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT INTO audit (
-                id, timestamp, principal, action, resource, decision, session_ref, notes,
-                policy_id, evaluation_trace, denial_reason
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        )
-        .bind(row.id.to_string())
-        .bind(row.timestamp.to_rfc3339())
-        .bind(serialize_json(&row.principal)?)
-        .bind(serialize_json(&row.action)?)
-        .bind(serialize_json(&row.resource)?)
-        .bind(serialize_json(&row.decision)?)
-        .bind(row.session_ref.map(|id| id.to_string()))
-        .bind(row.notes.as_deref())
-        .bind(row.policy_id.as_deref())
-        .bind(row.evaluation_trace.as_deref())
-        .bind(row.denial_reason.as_deref())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+    async fn insert_audit_row(&self, row: AuditRow) -> Result<(), StoreError> {
+        with_connection(self.path.clone(), move |connection| {
+            insert_audit_row(connection, row)
+        })
+        .await
     }
 }
 
 #[async_trait]
 impl AuditSink for SqliteAuditSink {
     async fn record(&self, row: AuditRow) -> Result<(), AuditError> {
-        self.insert_audit_row(&row)
+        self.insert_audit_row(row)
             .await
             .map_err(|error| AuditError::sink(error.to_string()))
     }
@@ -144,21 +105,20 @@ struct AuditRecord {
 }
 
 impl AuditRecord {
-    fn from_row(row: SqliteRow) -> Result<AuditRow, StoreError> {
-        Self {
-            id: row.try_get("id")?,
-            timestamp: row.try_get("timestamp")?,
-            principal: row.try_get("principal")?,
-            action: row.try_get("action")?,
-            resource: row.try_get("resource")?,
-            decision: row.try_get("decision")?,
-            session_ref: row.try_get("session_ref")?,
-            notes: row.try_get("notes")?,
-            policy_id: row.try_get("policy_id")?,
-            evaluation_trace: row.try_get("evaluation_trace")?,
-            denial_reason: row.try_get("denial_reason")?,
-        }
-        .try_into_audit_row()
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            timestamp: row.get("timestamp")?,
+            principal: row.get("principal")?,
+            action: row.get("action")?,
+            resource: row.get("resource")?,
+            decision: row.get("decision")?,
+            session_ref: row.get("session_ref")?,
+            notes: row.get("notes")?,
+            policy_id: row.get("policy_id")?,
+            evaluation_trace: row.get("evaluation_trace")?,
+            denial_reason: row.get("denial_reason")?,
+        })
     }
 
     fn try_into_audit_row(self) -> Result<AuditRow, StoreError> {
@@ -179,12 +139,12 @@ impl AuditRecord {
 }
 
 impl AuditTableColumn {
-    fn from_row(row: SqliteRow) -> Result<Self, StoreError> {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
-            name: row.try_get("name")?,
-            data_type: row.try_get("type")?,
-            not_null: row.try_get::<i64, _>("notnull")? != 0,
-            primary_key: row.try_get::<i64, _>("pk")? != 0,
+            name: row.get("name")?,
+            data_type: row.get("type")?,
+            not_null: row.get::<_, i64>("notnull")? != 0,
+            primary_key: row.get::<_, i64>("pk")? != 0,
         })
     }
 }
@@ -198,4 +158,130 @@ fn parse_optional_uuid(value: Option<String>) -> Result<Option<Uuid>, StoreError
         .map(|id| Uuid::parse_str(&id))
         .transpose()
         .map_err(Into::into)
+}
+
+async fn with_connection<T>(
+    path: PathBuf,
+    operation: impl FnOnce(&mut Connection) -> Result<T, StoreError> + Send + 'static,
+) -> Result<T, StoreError>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let mut connection = Connection::open(path)?;
+        operation(&mut connection)
+    })
+    .await?
+}
+
+fn run_audit_migrations(connection: &mut Connection) -> Result<(), StoreError> {
+    connection.execute_batch(&create_schema_version_table_sql())?;
+    if schema_version_applied(connection, AUDIT_SCHEMA_VERSION)? {
+        return Ok(());
+    }
+
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(AUDIT_MIGRATION_SQL)?;
+    transaction.execute(
+        &insert_schema_version_sql(),
+        params![AUDIT_SCHEMA_VERSION, Utc::now().to_rfc3339()],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn schema_version_applied(connection: &Connection, version: i64) -> Result<bool, StoreError> {
+    let applied = connection.query_row(&schema_version_applied_sql(), params![version], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(applied != 0)
+}
+
+fn query_audit_rows(connection: &mut Connection) -> Result<Vec<AuditRow>, StoreError> {
+    let query = select_audit_sql();
+    let mut statement = connection.prepare(&query)?;
+    let records = statement.query_map([], AuditRecord::from_row)?;
+    records
+        .map(|record| record?.try_into_audit_row())
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn query_audit_table_columns(
+    connection: &mut Connection,
+) -> Result<Vec<AuditTableColumn>, StoreError> {
+    let query = audit_table_columns_sql();
+    let mut statement = connection.prepare(&query)?;
+    let columns = statement.query_map([], AuditTableColumn::from_row)?;
+    columns.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn insert_audit_row(connection: &mut Connection, row: AuditRow) -> Result<(), StoreError> {
+    let id = row.id.to_string();
+    let timestamp = row.timestamp.to_rfc3339();
+    let principal = serialize_json(&row.principal)?;
+    let action = serialize_json(&row.action)?;
+    let resource = serialize_json(&row.resource)?;
+    let decision = serialize_json(&row.decision)?;
+    let session_ref = row.session_ref.map(|id| id.to_string());
+    let statement = insert_audit_sql();
+
+    connection.execute(
+        &statement,
+        params![
+            id,
+            timestamp,
+            principal,
+            action,
+            resource,
+            decision,
+            session_ref,
+            row.notes,
+            row.policy_id,
+            row.evaluation_trace,
+            row.denial_reason,
+        ],
+    )?;
+    Ok(())
+}
+
+fn create_schema_version_table_sql() -> String {
+    format!(
+        "\
+CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (
+    version INTEGER NOT NULL PRIMARY KEY,
+    applied_at TEXT NOT NULL
+)"
+    )
+}
+
+fn insert_schema_version_sql() -> String {
+    format!("INSERT OR IGNORE INTO {SCHEMA_VERSION_TABLE} (version, applied_at) VALUES (?1, ?2)")
+}
+
+fn schema_version_applied_sql() -> String {
+    format!("SELECT EXISTS(SELECT 1 FROM {SCHEMA_VERSION_TABLE} WHERE version = ?1)")
+}
+
+fn select_audit_sql() -> String {
+    format!(
+        "\
+SELECT id, timestamp, principal, action, resource, decision, session_ref, notes,
+       policy_id, evaluation_trace, denial_reason
+FROM {AUDIT_TABLE}
+ORDER BY rowid ASC"
+    )
+}
+
+fn audit_table_columns_sql() -> String {
+    format!("PRAGMA table_info({AUDIT_TABLE})")
+}
+
+fn insert_audit_sql() -> String {
+    format!(
+        "\
+INSERT INTO {AUDIT_TABLE} (
+    id, timestamp, principal, action, resource, decision, session_ref, notes,
+    policy_id, evaluation_trace, denial_reason
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+    )
 }

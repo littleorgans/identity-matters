@@ -1,0 +1,27 @@
+# fmm configuration
+# Only include fields you want to override. Defaults apply for everything else.
+#
+# Precedence: compiled defaults < this file < FMM_* environment variables
+#
+# Environment variable overrides:
+#   FMM_MAX_LINES=50000
+#   FMM_LANGUAGES=rs,py,ts
+#   FMM_EXCLUDE=vendor/**,dist/**
+#
+# Note: .gitignore and .fmmignore are always respected. Exclude patterns here
+# are applied in addition to those ignore files.
+
+# Maximum lines per file. Files exceeding this limit are skipped during indexing.
+# Default: 100000. Set to 0 to disable the limit.
+# max_lines = 100_000
+
+# Glob patterns to exclude (in addition to .gitignore and .fmmignore).
+# exclude = ["benchmarks/fixtures/**", "vendor/**"]
+
+# Override which file extensions to index (default: 29 languages).
+# languages = ["ts", "tsx", "js", "jsx", "py", "rs"]
+
+# Test file detection patterns.
+# [test_patterns]
+# path_contains = ["/test/", "/tests/", "/spec/", "/e2e/", "/__tests__/"]
+# filename_suffixes = [".spec.ts", ".test.ts", ".test.js", "_test.go", "_test.rs"]
