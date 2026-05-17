@@ -1,3 +1,3 @@
 pub mod audit;
 
-pub use audit::{AuditTableColumn, SqliteAuditSink, StoreError};
+pub use audit::{AuditFilters, AuditTableColumn, SqliteAuditSink, StoreError};

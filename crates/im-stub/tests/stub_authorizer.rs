@@ -5,7 +5,7 @@ use im_core::{
     Action, AuditDecision, AuditError, AuditRow, AuditSink, Authorized, Authorizer, AuthzError,
     Principal, ResourceSpec,
 };
-use im_store::{SqliteAuditSink, query_audit};
+use im_store::{AuditFilters, SqliteAuditSink, query_audit};
 use im_stub::StubAuthorizer;
 
 #[derive(Default)]
@@ -50,7 +50,9 @@ async fn authorizes_local_uid_and_audits_both_decisions_with_sqlite_sink() {
 
     let process_uid = nix::unistd::getuid().as_raw();
     authorize_both_decisions(&sink, process_uid).await;
-    let rows = query_audit(&db_path).await.expect("read audit rows");
+    let rows = query_audit(&db_path, AuditFilters::default())
+        .await
+        .expect("read audit rows");
 
     assert_audited_both_decisions(rows, process_uid);
 }

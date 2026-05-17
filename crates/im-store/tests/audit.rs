@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use im_core::{
-    Action, AuditDecision, Authorizer, AuthzError, Principal, ResourceSpec, RuntimeKind,
+    Action, AuditDecision, AuditRow, AuditSink, Authorizer, AuthzError, Principal, ResourceSpec,
+    RuntimeKind,
 };
 use im_store::schema::RESERVED_AUDIT_COLUMNS;
-use im_store::{AuditTableColumn, SqliteAuditSink, query_audit};
+use im_store::{AuditFilters, AuditTableColumn, SqliteAuditSink, query_audit};
 use im_stub::StubAuthorizer;
 use uuid::Uuid;
 
@@ -48,7 +49,9 @@ async fn sqlite_sink_persists_authorizer_audit_rows() {
         assert!(authorized.capabilities.is_empty());
     }
 
-    let rows = query_audit(&db_path).await.expect("read audit rows");
+    let rows = query_audit(&db_path, AuditFilters::default())
+        .await
+        .expect("read audit rows");
     assert_eq!(rows.len(), Action::ALL.len());
 
     for (row, expected_action) in rows.iter().zip(Action::ALL) {
@@ -71,7 +74,7 @@ async fn sqlite_sink_persists_authorizer_audit_rows() {
         .await;
 
     assert_eq!(denial, Err(AuthzError::UnknownPrincipal));
-    let rows = query_audit(&db_path)
+    let rows = query_audit(&db_path, AuditFilters::default())
         .await
         .expect("read audit rows after denial");
     let denied = &rows[Action::ALL.len()];
@@ -85,6 +88,87 @@ async fn sqlite_sink_persists_authorizer_audit_rows() {
     assert_uuid_v7(denied.id);
 }
 
+#[tokio::test]
+async fn query_audit_filters_rows_without_redeclaring_audit_types() {
+    let temp_dir = tempfile::tempdir().expect("create audit sqlite temp dir");
+    let db_path = temp_dir.path().join("audit.sqlite");
+    let sink = SqliteAuditSink::connect(&db_path)
+        .await
+        .expect("connect audit sqlite sink");
+    sink.run_migrations().await.expect("run audit migrations");
+
+    let local_uid = nix::unistd::getuid().as_raw();
+    let other_uid = different_uid(local_uid);
+    let session = Uuid::now_v7();
+    let old_timestamp = Utc::now() - Duration::minutes(10);
+    let recent_timestamp = Utc::now();
+
+    let old_spawn = audit_row(
+        Principal::Local(local_uid),
+        Action::Spawn,
+        AuditDecision::Allow,
+        Some(session),
+        old_timestamp,
+    );
+    let recent_spawn = audit_row(
+        Principal::Local(local_uid),
+        Action::Spawn,
+        AuditDecision::Allow,
+        Some(session),
+        recent_timestamp,
+    );
+    let recent_kill = audit_row(
+        Principal::Local(local_uid),
+        Action::Kill,
+        AuditDecision::Allow,
+        Some(session),
+        recent_timestamp,
+    );
+    let other_spawn = audit_row(
+        Principal::Local(other_uid),
+        Action::Spawn,
+        AuditDecision::Allow,
+        Some(session),
+        recent_timestamp,
+    );
+
+    for row in [
+        old_spawn.clone(),
+        recent_spawn.clone(),
+        recent_kill.clone(),
+        other_spawn.clone(),
+    ] {
+        sink.record(row).await.expect("record audit row");
+    }
+
+    let all = query_audit(&db_path, AuditFilters::default())
+        .await
+        .expect("read all audit rows");
+    assert_eq!(
+        all.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![
+            old_spawn.id,
+            recent_spawn.id,
+            recent_kill.id,
+            other_spawn.id,
+        ]
+    );
+
+    let filtered = query_audit(
+        &db_path,
+        AuditFilters {
+            principal: Some(Principal::Local(local_uid)),
+            action: Some(Action::Spawn),
+            since: Some(old_timestamp + Duration::minutes(1)),
+            limit: Some(1),
+        },
+    )
+    .await
+    .expect("read filtered audit rows");
+
+    assert_eq!(filtered, vec![recent_spawn]);
+}
+
 fn resource() -> ResourceSpec {
     ResourceSpec {
         workspace: Some("identity-matters".to_owned()),
@@ -92,6 +176,31 @@ fn resource() -> ResourceSpec {
         runtime: Some(RuntimeKind::Codex),
         session_id: Some(Uuid::now_v7()),
         labels: HashMap::from([("issue".to_owned(), "ALP-2457".to_owned())]),
+    }
+}
+
+fn audit_row(
+    principal: Principal,
+    action: Action,
+    decision: AuditDecision,
+    session_id: Option<Uuid>,
+    timestamp: chrono::DateTime<Utc>,
+) -> AuditRow {
+    AuditRow {
+        id: Uuid::now_v7(),
+        timestamp,
+        principal,
+        action,
+        resource: ResourceSpec {
+            session_id,
+            ..Default::default()
+        },
+        decision,
+        session_ref: session_id,
+        notes: None,
+        policy_id: None,
+        evaluation_trace: None,
+        denial_reason: None,
     }
 }
 

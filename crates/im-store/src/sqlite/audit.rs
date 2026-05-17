@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use im_core::{Action, AuditDecision, AuditError, AuditRow, AuditSink, Principal, ResourceSpec};
-use rusqlite::{Connection, Row, params};
+use rusqlite::types::ToSql;
+use rusqlite::{Connection, Row, params, params_from_iter};
 use serde::Serialize;
 use thiserror::Error;
 use uuid::Uuid;
@@ -23,8 +24,18 @@ pub enum StoreError {
     Timestamp(#[from] chrono::ParseError),
     #[error("uuid parse error: {0}")]
     Uuid(#[from] uuid::Error),
+    #[error("audit query limit too large: {0}")]
+    LimitTooLarge(usize),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditFilters {
+    pub principal: Option<Principal>,
+    pub action: Option<Action>,
+    pub since: Option<DateTime<Utc>>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,8 +75,11 @@ impl SqliteAuditSink {
         with_connection(self.path.clone(), run_audit_migrations).await
     }
 
-    pub async fn query_audit(&self) -> Result<Vec<AuditRow>, StoreError> {
-        with_connection(self.path.clone(), query_audit_rows).await
+    pub async fn query_audit(&self, filters: AuditFilters) -> Result<Vec<AuditRow>, StoreError> {
+        with_connection(self.path.clone(), move |connection| {
+            query_audit_rows(connection, filters)
+        })
+        .await
     }
 
     pub async fn audit_table_columns(&self) -> Result<Vec<AuditTableColumn>, StoreError> {
@@ -197,10 +211,16 @@ fn schema_version_applied(connection: &Connection, version: i64) -> Result<bool,
     Ok(applied != 0)
 }
 
-fn query_audit_rows(connection: &mut Connection) -> Result<Vec<AuditRow>, StoreError> {
-    let query = select_audit_sql();
+fn query_audit_rows(
+    connection: &mut Connection,
+    filters: AuditFilters,
+) -> Result<Vec<AuditRow>, StoreError> {
+    let (query, params) = select_audit_sql(filters)?;
     let mut statement = connection.prepare(&query)?;
-    let records = statement.query_map([], AuditRecord::from_row)?;
+    let records = statement.query_map(
+        params_from_iter(params.iter().map(|param| param.as_ref() as &dyn ToSql)),
+        AuditRecord::from_row,
+    )?;
     records
         .map(|record| record?.try_into_audit_row())
         .collect::<Result<Vec<_>, _>>()
@@ -262,14 +282,40 @@ fn schema_version_applied_sql() -> String {
     format!("SELECT EXISTS(SELECT 1 FROM {SCHEMA_VERSION_TABLE} WHERE version = ?1)")
 }
 
-fn select_audit_sql() -> String {
-    format!(
+fn select_audit_sql(filters: AuditFilters) -> Result<(String, Vec<Box<dyn ToSql>>), StoreError> {
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+
+    if let Some(principal) = filters.principal {
+        conditions.push("principal = ?");
+        params.push(Box::new(serialize_json(&principal)?));
+    }
+    if let Some(action) = filters.action {
+        conditions.push("action = ?");
+        params.push(Box::new(serialize_json(&action)?));
+    }
+    if let Some(since) = filters.since {
+        conditions.push("timestamp >= ?");
+        params.push(Box::new(since.to_rfc3339()));
+    }
+
+    let mut query = format!(
         "\
 SELECT id, timestamp, principal, action, resource, decision, session_ref, notes,
        policy_id, evaluation_trace, denial_reason
-FROM {AUDIT_TABLE}
-ORDER BY rowid ASC"
-    )
+FROM {AUDIT_TABLE}"
+    );
+    if !conditions.is_empty() {
+        query.push_str(" WHERE ");
+        query.push_str(&conditions.join(" AND "));
+    }
+    query.push_str(" ORDER BY rowid ASC");
+    if let Some(limit) = filters.limit {
+        let limit = i64::try_from(limit).map_err(|_| StoreError::LimitTooLarge(limit))?;
+        query.push_str(" LIMIT ?");
+        params.push(Box::new(limit));
+    }
+    Ok((query, params))
 }
 
 fn audit_table_columns_sql() -> String {
