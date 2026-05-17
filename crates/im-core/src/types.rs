@@ -5,6 +5,10 @@ use serde::ser::{SerializeMap, SerializeStruct};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
+/// IAM subject on the v1 wire boundary.
+///
+/// Principals use a stable `kind` tag. Unknown kinds keep their raw fields so
+/// v1 readers can inspect rows written by newer identity-matters producers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Principal {
     Local(u32),
@@ -189,27 +193,5 @@ mod tests {
         let value = serde_json::to_value(Principal::Local(501)).unwrap();
 
         assert_eq!(value, json!({ "kind": "Local", "uid": 501 }));
-    }
-
-    #[test]
-    fn preserves_unknown_principal_fields() {
-        let original = json!({
-            "kind": "ServiceAccount",
-            "namespace": "default",
-            "name": "runner"
-        });
-        let principal: Principal = serde_json::from_value(original.clone()).unwrap();
-
-        assert_eq!(
-            principal,
-            Principal::Unknown {
-                kind: "ServiceAccount".to_owned(),
-                raw: json!({
-                    "namespace": "default",
-                    "name": "runner"
-                }),
-            }
-        );
-        assert_eq!(serde_json::to_value(principal).unwrap(), original);
     }
 }

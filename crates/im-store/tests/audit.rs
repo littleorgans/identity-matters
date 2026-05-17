@@ -32,6 +32,7 @@ async fn sqlite_sink_persists_authorizer_audit_rows() {
     );
     assert_reserved_columns_are_nullable(&columns);
     assert_primary_key_is_uuid_column(&columns);
+    insta::assert_snapshot!("audit_table_columns", audit_columns_snapshot(&columns));
 
     let process_uid = nix::unistd::getuid().as_raw();
     let authorizer = StubAuthorizer::new(&sink, process_uid);
@@ -209,6 +210,19 @@ fn assert_reserved_columns_are_nullable(columns: &[AuditTableColumn]) {
         let column = audit_column(columns, name);
         assert!(!column.not_null, "{name} should be nullable");
     }
+}
+
+fn audit_columns_snapshot(columns: &[AuditTableColumn]) -> String {
+    columns
+        .iter()
+        .map(|column| {
+            format!(
+                "{} {} not_null={} primary_key={}",
+                column.name, column.data_type, column.not_null, column.primary_key
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn assert_primary_key_is_uuid_column(columns: &[AuditTableColumn]) {

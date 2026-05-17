@@ -11,6 +11,7 @@ im-core.workspace = true
 
 [dev-dependencies]
 im-store.workspace = true
+insta.workspace = true
 nix.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

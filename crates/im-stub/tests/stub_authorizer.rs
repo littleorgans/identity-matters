@@ -35,8 +35,13 @@ async fn authorizes_local_uid_and_audits_both_decisions_with_mock_sink() {
     let mock = MockAuditSink::default();
     let process_uid = nix::unistd::getuid().as_raw();
     authorize_both_decisions(&mock, process_uid).await;
+    let rows = mock.rows();
 
-    assert_audited_both_decisions(mock.rows(), process_uid);
+    assert_audited_both_decisions(&rows, process_uid);
+    insta::assert_snapshot!(
+        "stub_authorizer_audit_decisions",
+        format_stub_audit_rows(&rows, process_uid)
+    );
 }
 
 #[tokio::test]
@@ -54,7 +59,7 @@ async fn authorizes_local_uid_and_audits_both_decisions_with_sqlite_sink() {
         .await
         .expect("read audit rows");
 
-    assert_audited_both_decisions(rows, process_uid);
+    assert_audited_both_decisions(&rows, process_uid);
 }
 
 async fn authorize_both_decisions<S>(audit_sink: &S, process_uid: u32)
@@ -84,7 +89,7 @@ where
     assert_eq!(denied, Err(AuthzError::UnknownPrincipal));
 }
 
-fn assert_audited_both_decisions(rows: Vec<AuditRow>, process_uid: u32) {
+fn assert_audited_both_decisions(rows: &[AuditRow], process_uid: u32) {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].decision, AuditDecision::Allow);
     assert_eq!(rows[0].action, Action::Spawn);
@@ -96,4 +101,27 @@ fn assert_audited_both_decisions(rows: Vec<AuditRow>, process_uid: u32) {
         }
     );
     assert_eq!(rows[1].denial_reason.as_deref(), Some("non-local uid"));
+}
+
+fn format_stub_audit_rows(rows: &[AuditRow], process_uid: u32) -> String {
+    rows.iter()
+        .map(|row| {
+            format!(
+                "principal={} action={:?} decision={:?} denial_reason={}",
+                principal_label(&row.principal, process_uid),
+                row.action,
+                row.decision,
+                row.denial_reason.as_deref().unwrap_or("<none>")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn principal_label(principal: &Principal, process_uid: u32) -> &'static str {
+    match principal {
+        Principal::Local(uid) if *uid == process_uid => "Local(uid=N)",
+        Principal::Local(_) => "Local(uid=other)",
+        Principal::Unknown { .. } => "Unknown",
+    }
 }

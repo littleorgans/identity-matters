@@ -10,6 +10,9 @@ release:
 test *ARGS:
     cargo nextest run --workspace {{ARGS}}
 
+insta *ARGS:
+    cargo insta test {{ARGS}}
+
 test-doc:
     cargo test --workspace --doc
 
